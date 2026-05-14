@@ -210,7 +210,8 @@ uv run python -m contentbase.app query \
 contentbase/
 ├── data/
 │   └── raw/                    # Пример исходных документов
-├── docs/                       # Спецификации и план реализации
+├── docs/
+│   └── screenshots/            # Скриншоты Langfuse для сдачи
 ├── src/
 │   └── contentbase/
 │       ├── app.py              # CLI-приложение
