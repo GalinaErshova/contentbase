@@ -4,8 +4,10 @@
 """
 from pathlib import Path
 
+from contentbase.evaluation import estimate_usage_details
 from contentbase.generation import OllamaClient
 from contentbase.schemas import Document
+from contentbase.tracing import get_tracing_client
 
 
 class Summarizer:
@@ -37,7 +39,25 @@ Guidelines:
 
 Summary:"""
 
-        summary = self.client.generate(prompt, temperature=0.5, max_tokens=512)
+        tracing = get_tracing_client()
+        model = self.client.settings.ollama_chat_model
+        with tracing.generation(
+            "summary_generation",
+            model=model,
+            input_data=prompt,
+            model_parameters={"temperature": 0.5, "max_tokens": 512},
+            metadata={
+                "input_length": len(text),
+                "max_summary_length": max_length,
+                "mock_mode": self.client.mock_mode,
+            },
+        ):
+            summary = self.client.generate(prompt, temperature=0.5, max_tokens=512)
+            tracing.update_current_generation(
+                output=summary,
+                metadata={"output_length": len(summary)},
+                usage_details=estimate_usage_details(prompt, summary),
+            )
         return summary
 
     def summarize_document(self, document: Document) -> dict:
@@ -74,9 +94,18 @@ Summary:"""
         Returns:
             Словарь с summary и метаданными.
         """
-        # Загружаем документ напрямую; в будущем лучше использовать ingestion.
-        with open(file_path, "r", encoding="utf-8") as f:
-            text = f.read()
+        tracing = get_tracing_client()
+
+        with tracing.span(
+            "load_summary_document",
+            input_data={"file_path": file_path},
+        ):
+            with open(file_path, "r", encoding="utf-8") as f:
+                text = f.read()
+            tracing.update_current_span(
+                output={"input_length": len(text)},
+                metadata={"file_path": file_path},
+            )
 
         # Создаём временный объект Document.
         doc_path = Path(file_path)

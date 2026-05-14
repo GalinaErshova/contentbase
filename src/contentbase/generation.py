@@ -7,7 +7,14 @@ from typing import Optional
 from datetime import datetime
 
 from contentbase.config import get_settings
+from contentbase.evaluation import (
+    build_llm_judge_prompt,
+    estimate_usage_details,
+    evaluate_answer,
+    parse_judge_score,
+)
 from contentbase.schemas import RagAnswer
+from contentbase.tracing import get_tracing_client
 
 
 SUPPORTED_CONTEXT_SUFFIXES = {".md", ".txt"}
@@ -202,6 +209,8 @@ class Generator:
         question: str,
         context: Optional[str] = None,
         context_file: Optional[str] = None,
+        evaluate: bool = True,
+        llm_judge: bool = False,
     ) -> RagAnswer:
         """Ответить на вопрос с необязательным контекстом.
 
@@ -213,7 +222,9 @@ class Generator:
         Returns:
             RagAnswer с ответом и источниками.
         """
+        tracing = get_tracing_client()
         sources = []
+        context_text = context
 
         # Собираем prompt.
         if context:
@@ -231,11 +242,23 @@ Answer: question using ONLY the provided context. If context doesn't contain eno
 Be concise and accurate. Include citations in the format [source: doc_id]."""
         elif context_file:
             # Phase 1: basic Q&A с полным контекстом файла или директории.
-            context, sources = load_context_from_path(context_file)
+            with tracing.span(
+                "load_context",
+                input_data={"context_file": context_file},
+                metadata={"mode": "basic"},
+            ):
+                context_text, sources = load_context_from_path(context_file)
+                tracing.update_current_span(
+                    output={
+                        "source_count": len(sources),
+                        "context_length": len(context_text),
+                    },
+                    metadata={"sources": sources},
+                )
             prompt = f"""You are a helpful assistant answering questions based on provided document.
 
 Document:
-{context}
+{context_text}
 
 Question: {question}
 
@@ -251,7 +274,88 @@ Question: {question}
 Provide a helpful answer."""
 
         # Генерируем ответ.
-        answer = self.client.generate(prompt, temperature=0.7, max_tokens=1024)
+        model = self.client.settings.ollama_chat_model
+        with tracing.span(
+            "build_prompt",
+            metadata={
+                "has_context": bool(context_text),
+                "context_file": context_file,
+                "source_count": len(sources),
+                "prompt_length": len(prompt),
+            },
+        ):
+            tracing.update_current_span(output={"prompt_preview": prompt[:500]})
+
+        with tracing.generation(
+            "llm_generation",
+            model=model,
+            input_data=prompt,
+            model_parameters={"temperature": 0.7, "max_tokens": 1024},
+            metadata={
+                "mock_mode": self.client.mock_mode,
+                "context_length": len(context_text or ""),
+                "sources": sources,
+            },
+        ):
+            answer = self.client.generate(prompt, temperature=0.7, max_tokens=1024)
+            tracing.update_current_generation(
+                output=answer,
+                metadata={"answer_length": len(answer)},
+                usage_details=estimate_usage_details(prompt, answer),
+            )
+
+        if evaluate:
+            with tracing.span(
+                "custom_evaluator",
+                as_type="evaluator",
+                input_data={
+                    "question": question,
+                    "answer": answer,
+                    "sources": sources,
+                },
+                metadata={"evaluator": "contentbase_heuristic_v1"},
+            ):
+                evaluation = evaluate_answer(
+                    question=question,
+                    answer=answer,
+                    context=context_text,
+                    sources=sources,
+                )
+                evaluation_data = evaluation.model_dump()
+                tracing.update_current_span(output=evaluation_data)
+                for score_name, score_value in evaluation_data.items():
+                    tracing.log_score(
+                        score_name,
+                        score_value,
+                        comment="ContentBase custom heuristic evaluator",
+                        metadata={"evaluator": "contentbase_heuristic_v1"},
+                    )
+
+        if llm_judge:
+            judge_prompt = build_llm_judge_prompt(question, answer, context_text)
+            with tracing.generation(
+                "llm_as_a_judge",
+                model=model,
+                input_data=judge_prompt,
+                model_parameters={"temperature": 0.0, "max_tokens": 16},
+                metadata={"judge": "ollama_numeric_quality_score"},
+            ):
+                judge_output = self.client.generate(
+                    judge_prompt,
+                    temperature=0.0,
+                    max_tokens=16,
+                )
+                judge_score = parse_judge_score(judge_output)
+                tracing.update_current_generation(
+                    output=judge_output,
+                    usage_details=estimate_usage_details(judge_prompt, judge_output),
+                )
+                tracing.log_score(
+                    "llm_as_judge_score",
+                    judge_score,
+                    comment="LLM-as-a-judge numeric score from Ollama",
+                    metadata={"judge_model": model},
+                )
 
         return RagAnswer(
             answer=answer,

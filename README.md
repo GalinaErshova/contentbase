@@ -1,319 +1,277 @@
 # ContentBase
 
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![uv](https://img.shields.io/badge/uv-0.1.x-purple.svg)](https://github.com/astral-sh/uv)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![OTUS LLM Driven Development](https://img.shields.io/badge/OTUS-LLM%20Driven%20Development-green.svg)](https://otus.ru/lessons/llm-driven-development)
+ContentBase - учебный Python-проект для локальной обработки текстовых документов с помощью LLM. Проект ориентирован на работу с русскоязычными материалами и демонстрирует базовые элементы будущей RAG-системы: загрузку документов, разбиение на фрагменты, генерацию ответов и кратких пересказов.
 
-A local-first multi-agent RAG system for building thematic knowledge bases and generating grounded content. Designed for the OTUS "LLM Driven Development" course.
+Проект подготовлен в рамках курса OTUS «LLM Driven Development».
 
-## Features
+## Возможности
 
-- 📄 **Document Ingestion**: Load and process `.md` and `.txt` files with automatic metadata extraction
-- 🔪 **Smart Chunking**: Overlapping chunks (1200 chars, 200 overlap) optimized for Russian text
-- 🔍 **Semantic Search**: Vector-based retrieval with Qdrant and multilingual embeddings
-- 🤖 **Local LLM**: Full privacy with Ollama (qwen2.5:14b for generation, bge-m3 for embeddings)
-- 📊 **Observability**: Complete Langfuse integration with traces, spans, and scores
-- 🧪 **Custom Evaluation**: Customizable evaluator with relevance, context usage, and citation metrics
-- 📝 **Multiple Modes**: Summarization, Q&A, and content generation
-- 🚀 **CLI Interface**: Command-line tools for all operations
-- 📓 **Jupyter Notebooks**: Interactive demos for learning and testing
+- загрузка `.md` и `.txt` документов из файла или директории;
+- извлечение базовых метаданных документа;
+- разбиение текста на чанки с перекрытием;
+- краткий пересказ документа через Ollama;
+- ответы на вопросы с контекстом из файла или директории;
+- режим mock-ответов, если Ollama недоступна;
+- CLI-интерфейс на Typer;
+- интеграция с Langfuse: traces, spans, events, generations, metadata, scores, user_id/session_id;
+- custom evaluator для оценки ответов;
+- LLM-as-a-judge режим для дополнительной оценки качества;
+- Docker Compose для запуска Qdrant как задела под следующий этап RAG.
 
-## Architecture
+## Текущее состояние
 
-ContentBase implements a modular RAG pipeline with the following components:
+Сейчас реализован первый этап проекта:
 
-```
-User Input (Question/Document)
-         ↓
-    [Ingestion]
-         ↓
-    [Chunking]
-         ↓
-  [Embeddings] → Ollama (bge-m3)
-         ↓
-   [Vector Store] → Qdrant
-         ↓
-    [Retrieval]
-         ↓
- [RAG Prompt Builder]
-         ↓
-   [Generation] → Ollama (qwen2.5:14b)
-         ↓
-   [Answer + Sources]
-         ↓
-    [Langfuse] ← All operations traced
-```
+1. Загрузка документов.
+2. Разбиение документов на чанки.
+3. Саммаризация.
+4. Q&A по полному контексту файла или директории.
+5. Трассировка Langfuse для ingestion, summarization и Q&A.
+6. Custom evaluator и score-запись в Langfuse.
+7. Базовые тесты для чанкинга и генерации с контекстом.
 
-### Phase-based Development
+Полноценный RAG с векторным поиском через Qdrant находится в плане развития. Настройки Qdrant уже есть в конфигурации и `docker-compose.yml`, но CLI-команда `query` пока не выполняет семантический поиск по векторной базе.
 
-The project is implemented in three phases:
+## Требования
 
-1. **Phase 1**: Basic document processing (summarization, Q&A with full context)
-2. **Phase 2**: Vector database and semantic search (true RAG)
-3. **Phase 3**: Evaluation and dataset experiments
+- Python 3.11 или новее;
+- `uv`;
+- Ollama для реальной генерации ответов;
+- Docker и Docker Compose, если нужен Qdrant;
+- модели Ollama:
+  - `qwen2.5:14b` для генерации;
+  - `bge-m3` для эмбеддингов на будущих этапах.
 
-See the [implementation plan](docs/implementation-plan.md) for details.
-
-## Installation
-
-### Prerequisites
-
-- Python 3.11+
-- Docker & Docker Compose
-- Ollama (or use via Docker)
-- [uv](https://github.com/astral-sh/uv) package manager
-
-### Quick Start
-
-1. **Clone the repository**
+## Установка
 
 ```bash
-git clone https://github.com/your-username/contentbase.git
+git clone git@github.com:GalinaErshova/contentbase.git
 cd contentbase
-```
-
-2. **Install dependencies**
-
-```bash
 uv sync
 ```
 
-3. **Start infrastructure** (on development machine)
+Если проект уже скачан локально:
+
+```bash
+cd /home/projects/contentbase
+uv sync
+```
+
+## Подготовка Ollama
+
+Запустите Ollama и загрузите модель для генерации:
+
+```bash
+ollama pull qwen2.5:14b
+```
+
+Для будущего RAG-режима можно также загрузить embedding-модель:
+
+```bash
+ollama pull bge-m3
+```
+
+Если Ollama недоступна, приложение автоматически перейдет в mock-режим. Это удобно для тестов и демонстрации CLI, но ответы будут шаблонными.
+
+## Настройка окружения
+
+Основные настройки читаются из переменных окружения или файла `.env`.
+
+Пример:
+
+```env
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_CHAT_MODEL=qwen2.5:14b
+OLLAMA_EMBEDDING_MODEL=bge-m3
+QDRANT_URL=http://localhost:6333
+QDRANT_COLLECTION_NAME=contentbase
+LANGFUSE_HOST=http://localhost:3000
+LANGFUSE_PUBLIC_KEY=
+LANGFUSE_SECRET_KEY=
+DEFAULT_LANGUAGE=ru
+LOG_LEVEL=INFO
+```
+
+Langfuse необязателен. Если ключи не указаны, приложение продолжит работать без отправки трассировок.
+
+## Запуск инфраструктуры
+
+Для запуска Qdrant:
 
 ```bash
 docker compose up -d
 ```
 
-4. **Pull Ollama models**
+Qdrant будет доступен на:
 
-```bash
-ollama pull qwen2.5:14b
-ollama pull bge-m3
+```text
+http://localhost:6333
 ```
 
-5. **Configure environment**
+Остановить контейнеры:
 
 ```bash
-cp .env.example .env
-# Edit .env and add your Langfuse API keys from http://localhost:3000
+docker compose down
 ```
 
-6. **Run the application**
+## Использование
+
+Посмотреть доступные команды:
 
 ```bash
 uv run python -m contentbase.app --help
 ```
 
-## Usage
-
-### Summarize a document
+Или через установленный entrypoint:
 
 ```bash
-uv run python -m contentbase.app summarize --input data/raw/document.md
+uv run contentbase --help
 ```
 
-### Answer a question (RAG mode)
+### Проверить статус
 
 ```bash
-uv run python -m contentbase.app query --question "What is RAG?" --rag
+uv run python -m contentbase.app status
 ```
 
-### Answer a question (basic mode, full context)
+Команда покажет настройки Ollama, Qdrant, Langfuse и приложения.
+
+### Загрузить и разбить документы на чанки
 
 ```bash
-uv run python -m contentbase.app query --question "What is RAG?" --input data/raw/document.md
+uv run python -m contentbase.app ingest data/raw
 ```
 
-### Ingest documents
+С подробным выводом:
 
 ```bash
-uv run python -m contentbase.app ingest --source data/raw/
+uv run python -m contentbase.app ingest data/raw --verbose
 ```
 
-## Development
+### Сделать краткий пересказ документа
 
-### Project Structure
-
+```bash
+uv run python -m contentbase.app summarize data/raw/sample_01_rag.md
 ```
+
+С дополнительной информацией:
+
+```bash
+uv run python -m contentbase.app summarize data/raw/sample_01_rag.md --verbose
+```
+
+### Ответить на вопрос без контекста
+
+```bash
+uv run python -m contentbase.app query --question "Что такое RAG?"
+```
+
+### Ответить на вопрос с контекстом из файла
+
+```bash
+uv run python -m contentbase.app query \
+  --question "Что такое RAG?" \
+  --input data/raw/sample_01_rag.md
+```
+
+### Ответить на вопрос с контекстом из директории
+
+```bash
+uv run python -m contentbase.app query \
+  --question "Какие темы описаны в документах?" \
+  --input data/raw
+```
+
+### Ответить на вопрос и записать Langfuse scores
+
+```bash
+uv run python -m contentbase.app query \
+  --question "Что такое RAG и зачем он нужен?" \
+  --input data/raw/sample_01_rag.md \
+  --verbose \
+  --user-id demo-galina \
+  --session-id homework-demo
+```
+
+### Запустить LLM-as-a-judge
+
+```bash
+uv run python -m contentbase.app query \
+  --question "Какие преимущества дает RAG?" \
+  --input data/raw/sample_01_rag.md \
+  --llm-judge \
+  --user-id demo-galina \
+  --session-id homework-demo
+```
+
+## Структура проекта
+
+```text
 contentbase/
-├── docs/                 # Documentation
-│   ├── architecture.md           # Architecture details
-│   ├── report.md                # Homework report
-│   ├── setup_windows.md         # Windows setup guide
-│   └── screenshots/            # Langfuse screenshots
-├── data/                 # Source documents
-│   └── raw/                   # .md and .txt files
-├── notebooks/             # Jupyter notebooks
-│   ├── 01_phase1_basic_processing.ipynb
-│   ├── 02_phase2_rag_demo.ipynb
-│   └── 03_langfuse_dataset_experiment.ipynb
-├── src/contentbase/       # Source code
-│   ├── config.py              # Configuration loader
-│   ├── schemas.py            # Data models
-│   ├── ingestion.py           # Document loading
-│   ├── chunking.py          # Chunk splitter
-│   ├── embeddings.py         # Ollama embeddings
-│   ├── vector_store.py       # Qdrant operations
-│   ├── retrieval.py          # Search orchestration
-│   ├── generation.py         # RAG generation
-│   ├── summarization.py      # Summary pipeline
-│   ├── evaluation.py         # Custom evaluator
-│   ├── tracing.py           # Langfuse wrappers
-│   └── app.py              # CLI entry point
-└── tests/                # Tests
-    ├── test_chunking.py
-    ├── test_evaluation.py
-    ├── test_retrieval.py
-    └── test_integration.py
+├── data/
+│   └── raw/                    # Пример исходных документов
+├── docs/                       # Спецификации и план реализации
+├── src/
+│   └── contentbase/
+│       ├── app.py              # CLI-приложение
+│       ├── chunking.py         # Разбиение текста на чанки
+│       ├── config.py           # Настройки приложения
+│       ├── evaluation.py       # Custom evaluator и LLM-as-a-judge helpers
+│       ├── generation.py       # Генерация ответов через Ollama или mock-клиент
+│       ├── ingestion.py        # Загрузка документов
+│       ├── schemas.py          # Pydantic-модели
+│       ├── summarization.py    # Саммаризация документов
+│       └── tracing.py          # Обертки для Langfuse
+├── tests/                      # Автотесты
+├── docker-compose.yml          # Qdrant и заготовка для Langfuse
+├── pyproject.toml              # Зависимости и настройки проекта
+└── README.md
 ```
 
-### Running tests
+## Тесты и качество кода
+
+Запустить тесты:
 
 ```bash
 uv run pytest
 ```
 
-### Code quality
+Проверить код через Ruff:
 
 ```bash
-# Linting
-uv run ruff check src/
-
-# Type checking
-uv run mypy src/
+uv run ruff check src tests
 ```
 
-### Jupyter Notebooks
-
-Launch Jupyter:
+Проверить типы:
 
 ```bash
-uv run jupyter notebook
+uv run mypy src
 ```
 
-Available notebooks:
-- `01_phase1_basic_processing.ipynb` - Basic document processing (summarization, Q&A)
-- `02_phase2_rag_demo.ipynb` - RAG with vector search
-- `03_langfuse_dataset_experiment.ipynb` - Dataset creation and experiments
+## Наблюдаемость
 
-## Observability
+В проекте есть поддержка Langfuse. Если задать `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` и `LANGFUSE_HOST`, операции загрузки документов, саммаризации и генерации ответов будут отправлять traces.
 
-ContentBase integrates with [Langfuse](https://langfuse.com/) for complete observability:
+Что пишется в Langfuse:
 
-1. Access Langfuse UI at http://localhost:3000
-2. Create a project and get API keys
-3. Add keys to `.env`
-4. All operations are traced automatically
+- root trace для CLI-команды;
+- spans для загрузки документов, загрузки контекста, чанкинга и сборки prompt;
+- generation observations для вызовов Ollama;
+- event-подобные observations для старта, завершения и ошибок;
+- metadata: режим, файл контекста, источники, длины входа/выхода, mock-mode;
+- `user_id` и `session_id` через CLI-опции;
+- scores от custom evaluator;
+- score `llm_as_judge_score`, если включен `--llm-judge`.
 
-View traces, spans, and scores in the Langfuse dashboard.
+Если Langfuse не настроен, приложение работает без него.
 
-### Trace Structure
+Локальный чеклист сдачи можно вести в `docs/homework-submission.md`; этот файл намеренно не коммитится, чтобы не смешивать учебные заметки с кодом проекта.
 
-Each RAG query produces a trace with the following spans:
+## Планы развития
 
-- `embed_query` - Generate embedding for user question
-- `retrieve_context` - Search Qdrant for relevant chunks
-- `build_prompt` - Construct RAG prompt with retrieved context
-- `llm_generation` - Generate answer using LLM
-- `evaluate_answer` - Evaluate answer quality
-
-## Evaluation
-
-The project includes a custom evaluator that measures:
-
-- **Answer Relevance** (0-1): How well the answer matches the question
-- **Context Usage** (0-1): Whether retrieved context is actually used
-- **Citation Presence** (0-1): Whether sources are cited in the answer
-- **Honesty** (0-1): Whether the system admits when it doesn't know
-- **Final Score** (0-1): Weighted combination of all metrics
-
-Final score formula:
-```
-final_score = 0.4 * answer_relevance + 
-             0.3 * context_usage + 
-             0.2 * citation_presence + 
-             0.1 * honesty
-```
-
-See `notebooks/03_langfuse_dataset_experiment.ipynb` for evaluation examples.
-
-### Dataset
-
-The project includes a Langfuse dataset `contentbase_rag_eval_v1` with 10+ test questions covering:
-
-- RAG concepts
-- Chunking and embeddings
-- Vector database usage
-- Langfuse observability
-- Evaluation metrics
-
-### Experiment
-
-Baseline experiment `contentbase_qdrant_top5_baseline` demonstrates:
-
-- top_k = 5
-- chunk_size = 1200
-- chunk_overlap = 200
-- cosine distance
-
-## Tech Stack
-
-| Component | Technology | Purpose |
-|-----------|-------------|-----------|
-| **LLM** | [Ollama](https://ollama.com/) (qwen2.5:14b) | Text generation |
-| **Embeddings** | [Ollama](https://ollama.com/) (bge-m3) | Vector generation |
-| **Vector Database** | [Qdrant](https://qdrant.tech/) | Semantic search |
-| **Observability** | [Langfuse](https://langfuse.com/) | Tracing & evaluation |
-| **Package Manager** | [uv](https://github.com/astral-sh/uv) | Dependency management |
-| **Testing** | [pytest](https://docs.pytest.org/) | Unit & integration tests |
-| **Type Checking** | [mypy](https://mypy-lang.org/) | Static type checking |
-| **Linting** | [ruff](https://github.com/astral-sh/ruff) | Code quality |
-
-## Performance
-
-Target performance metrics:
-
-- **Retrieval latency**: < 500ms for top_k=5
-- **Generation latency**: < 30s for summarization
-- **End-to-end RAG**: < 10s for typical queries
-
-*Note: Performance depends on hardware. Local LLM inference may be slower on CPU.*
-
-## Roadmap
-
-- [ ] Streamlit UI for easier interaction
-- [ ] Multi-document summarization
-- [ ] PDF ingestion support
-- [ ] Advanced retrieval (hybrid search, reranking)
-- [ ] LLM-as-a-judge evaluator
-- [ ] Export to Obsidian/Markdown
-
-## Contributing
-
-This is an educational project for the OTUS course. Feedback and suggestions are welcome!
-
-### Development Setup
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests for new features
-5. Ensure all tests pass
-6. Submit a pull request
-
-## License
-
-[MIT](LICENSE) - feel free to use this project for learning and experimentation.
-
-## Acknowledgments
-
-- Inspired by [agentic-rag-workshop](https://github.com/pueraeternis/agentic-rag-workshop)
-- OTUS "LLM Driven Development" course
-- [Ollama](https://ollama.com/) for local LLM inference
-- [Qdrant](https://qdrant.tech/) for vector database
-- [Langfuse](https://langfuse.com/) for observability
-
-## Contact
-
-For questions about the course or this project, please use the OTUS course channels.
+- подключить Qdrant к пайплайну ingestion;
+- сохранять чанки и эмбеддинги в векторную базу;
+- добавить семантический поиск по документам;
+- реализовать полноценный RAG-режим для команды `query`;
+- добавить оценку качества ответов;
+- расширить интеграцию с Langfuse.

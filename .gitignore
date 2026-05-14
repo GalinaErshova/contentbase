@@ -46,6 +46,10 @@ data/cache/
 # Logs
 *.log
 
+# Local homework notes
+docs/homework-submission.md
+
 # OS
 .DS_Store
 Thumbs.db
+*:Zone.Identifier

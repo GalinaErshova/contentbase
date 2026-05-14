@@ -25,6 +25,8 @@ console = Console()
 def ingest(
     source: str = typer.Argument(..., help="Path to source directory (e.g., data/raw)"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
+    user_id: str = typer.Option("demo-user", "--user-id", help="Langfuse user id"),
+    session_id: str = typer.Option("contentbase-demo", "--session-id", help="Langfuse session id"),
 ):
     """Загрузить и разбить на чанки документы из исходной директории.
 
@@ -34,33 +36,74 @@ def ingest(
     console.print(f"[bold blue]Ingesting documents from[/bold blue] {source}")
     console.print()
 
-    # Загружаем документы.
-    loader = DocumentLoader()
-    documents = loader.load_dir(source)
+    tracing = get_tracing_client()
+    with tracing.trace(
+        "document_ingestion",
+        input_data={"source": source},
+        user_id=user_id,
+        session_id=session_id,
+        tags=["contentbase", "ingestion"],
+        metadata={"source": source, "command": "ingest"},
+    ):
+        tracing.log_event("ingest_started", metadata={"source": source})
 
-    if not documents:
-        console.print("[red]No documents found[/red]")
-        raise typer.Exit(1)
+        # Загружаем документы.
+        loader = DocumentLoader()
+        with tracing.span("load_documents", input_data={"source": source}):
+            documents = loader.load_dir(source)
+            tracing.update_current_span(
+                output={"document_count": len(documents)},
+                metadata={"doc_ids": [doc.doc_id for doc in documents]},
+            )
 
-    # Показываем загруженные документы.
-    if verbose:
-        table = Table(title="Loaded Documents")
-        table.add_column("doc_id")
-        table.add_column("title")
-        table.add_column("topic")
-        table.add_column("language")
+        if not documents:
+            tracing.log_event("ingest_failed", metadata={"reason": "no_documents"}, level="WARNING")
+            console.print("[red]No documents found[/red]")
+            raise typer.Exit(1)
 
-        for doc in documents:
-            table.add_row(doc.doc_id, doc.title, doc.topic, doc.language)
+        # Показываем загруженные документы.
+        if verbose:
+            table = Table(title="Loaded Documents")
+            table.add_column("doc_id")
+            table.add_column("title")
+            table.add_column("topic")
+            table.add_column("language")
 
-        console.print(table)
+            for doc in documents:
+                table.add_row(doc.doc_id, doc.title, doc.topic, doc.language)
 
-    # Разбиваем документы на чанки.
-    chunker = Chunker()
-    chunks = chunker.chunk_documents(documents)
+            console.print(table)
 
-    console.print(f"[bold green]Ingestion complete:[/bold green] {len(documents)} documents → {len(chunks)} chunks")
-    console.print("[dim]Use 'summarize' or 'query' to work with documents[/dim]")
+        # Разбиваем документы на чанки.
+        chunker = Chunker()
+        with tracing.span(
+            "chunk_documents",
+            input_data={"document_count": len(documents)},
+            metadata={
+                "chunk_size_chars": chunker.chunk_size_chars,
+                "chunk_overlap_chars": chunker.chunk_overlap_chars,
+            },
+        ):
+            chunks = chunker.chunk_documents(documents)
+            tracing.update_current_span(
+                output={"chunk_count": len(chunks)},
+                metadata={"chunk_ids": [chunk.chunk_id for chunk in chunks[:20]]},
+            )
+
+        tracing.set_current_trace_io(
+            input_data={"source": source},
+            output_data={
+                "document_count": len(documents),
+                "chunk_count": len(chunks),
+            },
+        )
+        tracing.log_event(
+            "ingest_completed",
+            metadata={"document_count": len(documents), "chunk_count": len(chunks)},
+        )
+
+        console.print(f"[bold green]Ingestion complete:[/bold green] {len(documents)} documents → {len(chunks)} chunks")
+        console.print("[dim]Use 'summarize' or 'query' to work with documents[/dim]")
 
 
 @app.command()
@@ -68,6 +111,8 @@ def summarize(
     input: str = typer.Argument(..., help="Path to document file"),
     max_length: int = typer.Option(300, "--max-length", "-m", help="Maximum summary length"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
+    user_id: str = typer.Option("demo-user", "--user-id", help="Langfuse user id"),
+    session_id: str = typer.Option("contentbase-demo", "--session-id", help="Langfuse session id"),
 ):
     """Сделать краткий пересказ документа.
 
@@ -76,53 +121,56 @@ def summarize(
     console.print(f"[bold blue]Summarizing document:[/bold blue] {input}")
     console.print()
 
-    # Инициализируем компоненты.
-    summarizer = Summarizer()
     tracing = get_tracing_client()
+    with tracing.trace(
+        "document_summary",
+        input_data={"input_file": input, "max_length": max_length},
+        user_id=user_id,
+        session_id=session_id,
+        tags=["contentbase", "summary"],
+        metadata={"input_file": input, "max_length": max_length, "command": "summarize"},
+    ):
+        # Инициализируем компоненты.
+        summarizer = Summarizer()
 
-    # Создаём trace.
-    trace = None
-    if tracing.is_enabled():
-        trace = tracing.create_trace(
-            name="document_summary",
-            metadata={"input_file": input, "max_length": max_length},
-        )
+        try:
+            tracing.log_event("summary_started", metadata={"input_file": input})
 
-    try:
-        # Делаем summary.
-        result = summarizer.summarize_file(input)
+            # Делаем summary.
+            result = summarizer.summarize_file(input)
 
-        # Логируем генерацию.
-        if trace:
-            tracing.log_generation(
-                trace=trace,
-                name="summary_generation",
-                model=get_settings().ollama_chat_model,
-                input_text=f"Document: {result['title']}, length: {result['input_length']}",
-                output_text=result["summary"],
+            tracing.set_current_trace_io(
+                input_data={"input_file": input, "max_length": max_length},
+                output_data={"summary": result["summary"]},
+            )
+            tracing.log_score(
+                "compression_ratio",
+                float(result["compression_ratio"]),
+                comment="Output length divided by input length",
+            )
+            tracing.log_event(
+                "summary_completed",
                 metadata={
                     "input_length": result["input_length"],
                     "output_length": result["output_length"],
-                    "compression_ratio": result["compression_ratio"],
                 },
             )
 
-        # Показываем результат.
-        if verbose:
-            console.print(f"[bold]Title:[/bold] {result['title']}")
-            console.print(f"[dim]Input length:[/dim] {result['input_length']} chars")
-            console.print(f"[dim]Output length:[/dim] {result['output_length']} chars")
-            console.print(f"[dim]Compression ratio:[/dim] {result['compression_ratio']:.2%}")
-            console.print()
+            # Показываем результат.
+            if verbose:
+                console.print(f"[bold]Title:[/bold] {result['title']}")
+                console.print(f"[dim]Input length:[/dim] {result['input_length']} chars")
+                console.print(f"[dim]Output length:[/dim] {result['output_length']} chars")
+                console.print(f"[dim]Compression ratio:[/dim] {result['compression_ratio']:.2%}")
+                console.print()
 
-        console.print("[bold green]Summary:[/bold green]")
-        console.print(result["summary"])
+            console.print("[bold green]Summary:[/bold green]")
+            console.print(result["summary"])
 
-    except Exception as e:
-        console.print(f"[red]Error summarizing document:[/red] {e}")
-        if trace:
-            tracing.log_event(trace, name="summary_error", metadata={"error": str(e)})
-        raise typer.Exit(1)
+        except Exception as e:
+            console.print(f"[red]Error summarizing document:[/red] {e}")
+            tracing.log_event("summary_error", metadata={"error": str(e)}, level="ERROR")
+            raise typer.Exit(1)
 
 
 @app.command()
@@ -130,6 +178,10 @@ def query(
     question: str = typer.Option(..., "--question", "-q", help="Question to answer"),
     input: str = typer.Option(None, "--input", "-i", help="Path to context file or directory (basic Q&A mode)"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
+    user_id: str = typer.Option("demo-user", "--user-id", help="Langfuse user id"),
+    session_id: str = typer.Option("contentbase-demo", "--session-id", help="Langfuse session id"),
+    evaluate: bool = typer.Option(True, "--evaluate/--no-evaluate", help="Run custom evaluator and write scores"),
+    llm_judge: bool = typer.Option(False, "--llm-judge", help="Run LLM-as-a-judge and write score"),
 ):
     """Ответить на вопрос.
 
@@ -148,37 +200,41 @@ def query(
 
     console.print()
 
-    # Инициализируем компоненты.
-    generator = Generator()
     tracing = get_tracing_client()
+    with tracing.trace(
+        "basic_query" if input else "pure_generation",
+        input_data={"question": question, "context_file": input},
+        user_id=user_id,
+        session_id=session_id,
+        tags=["contentbase", "qa", mode],
+        metadata={
+            "mode": mode,
+            "context_file": input,
+            "command": "query",
+            "evaluate": evaluate,
+            "llm_judge": llm_judge,
+        },
+    ):
+        # Инициализируем компоненты.
+        generator = Generator()
 
-    # Создаём trace.
-    trace = None
-    if tracing.is_enabled():
-        trace = tracing.create_trace(
-            name="basic_query" if input else "pure_generation",
-            metadata={
-                "mode": mode,
-                "context_file": input,
-            },
-        )
+        try:
+            tracing.log_event("query_started", metadata={"mode": mode})
 
-    try:
-        # Генерируем ответ.
-        result = generator.answer_question(
-            question=question,
-            context=None,  # В Phase 1 RAG ещё не подключён.
-            context_file=input,
-        )
-
-        # Логируем генерацию.
-        if trace:
-            tracing.log_generation(
-                trace=trace,
-                name="qa_generation",
-                model=get_settings().ollama_chat_model,
-                input_text=question,
-                output_text=result.answer,
+            # Генерируем ответ.
+            result = generator.answer_question(
+                question=question,
+                context=None,  # В Phase 1 RAG ещё не подключён.
+                context_file=input,
+                evaluate=evaluate,
+                llm_judge=llm_judge,
+            )
+            tracing.set_current_trace_io(
+                input_data={"question": question, "context_file": input},
+                output_data={"answer": result.answer, "sources": result.sources},
+            )
+            tracing.log_event(
+                "query_completed",
                 metadata={
                     "mode": mode,
                     "sources": result.sources,
@@ -186,20 +242,19 @@ def query(
                 },
             )
 
-        # Показываем результат.
-        if verbose:
-            console.print(f"[dim]Sources:[/dim] {', '.join(result.sources) if result.sources else 'None'}")
-            console.print(f"[dim]Confidence:[/dim] {result.confidence:.2f}")
-            console.print()
+            # Показываем результат.
+            if verbose:
+                console.print(f"[dim]Sources:[/dim] {', '.join(result.sources) if result.sources else 'None'}")
+                console.print(f"[dim]Confidence:[/dim] {result.confidence:.2f}")
+                console.print()
 
-        console.print("[bold green]Answer:[/bold green]")
-        console.print(result.answer)
+            console.print("[bold green]Answer:[/bold green]")
+            console.print(result.answer)
 
-    except Exception as e:
-        console.print(f"[red]Error generating answer:[/red] {e}")
-        if trace:
-            tracing.log_event(trace, name="qa_error", metadata={"error": str(e)})
-        raise typer.Exit(1)
+        except Exception as e:
+            console.print(f"[red]Error generating answer:[/red] {e}")
+            tracing.log_event("qa_error", metadata={"error": str(e)}, level="ERROR")
+            raise typer.Exit(1)
 
 
 @app.command()
